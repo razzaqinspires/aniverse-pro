@@ -1,0 +1,40 @@
+{
+  "name": "aniverse-pro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aniverse PRO — production-ready anime streaming demo with keys, XP/levels, multi-server failover and demo login.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "canvas-confetti": "^1.9.3",
+    "framer-motion": "^11.11.0",
+    "hls.js": "^1.5.17",
+    "next": "14.2.15",
+    "next-auth": "^4.24.10",
+    "plyr": "^3.7.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sonner": "^1.7.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/canvas-confetti": "^1.6.4",
+    "@types/node": "^20.16.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

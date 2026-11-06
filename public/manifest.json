@@ -1,0 +1,27 @@
+{
+  "name": "Aniverse PRO",
+  "short_name": "Aniverse",
+  "description": "Streaming anime demo dengan sistem kunci, XP/level, multi-server failover, dan login instan.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0b14",
+  "theme_color": "#ff3d6e",
+  "lang": "id",
+  "categories": ["entertainment", "video"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+# Aniverse PRO — Docker Compose
+# Jalankan:  docker compose up --build
+# Akses:     http://localhost:3000
+#
+# Catatan: volume ./data:/app/data menyimpan SQLite. Pastikan folder ./data
+# di host dapat ditulis oleh uid 1000 (user `node` di dalam container).
+# Jika muncul error "permission denied" saat menulis DB, jalankan:
+#   mkdir -p data && sudo chown -R 1000:1000 data
+
+services:
+  web:
+    build: .
+    container_name: aniverse-pro
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - NEXTAUTH_URL=http://localhost:3000
+    volumes:
+      # Database SQLite persist di host.
+      - ./data:/app/data
+    # Opsional: jika pakai Redis untuk rate limit terdistribusi,
+    # tambahkan REDIS_URL=redis://redis:6379 di .env dan uncomment baris di bawah:
+    # depends_on:
+    #   - redis
+
+  # --- Redis (OPSIONAL, untuk rate limit terdistribusi multi-instance) ---
+  # Uncomment jika ingin menggunakan REDIS_URL=redis://redis:6379
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: aniverse-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+
+# volumes:
+#   redis-data:

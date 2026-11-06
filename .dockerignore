@@ -1,0 +1,39 @@
+# File yang tidak perlu dikirim ke Docker build context (mempercepat build & memperkecil image)
+
+# Dependencies & build output (akan di-install/dibuat ulang di dalam container)
+node_modules
+.next
+out
+build
+dist
+
+# Environment & secret (dilewatkan via env_file / --env saat runtime, JANGAN di-bake ke image)
+.env
+.env.local
+.env.*.local
+
+# Database SQLite (dipasang via volume ./data:/app/data, bukan di-bake)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# Testing artifacts
+playwright-report
+test-results
+coverage
+
+# Git & editor
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Docker itu sendiri
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Dokumentasi (boleh di-include jika ingin; di-skip untuk memperkecil image)
+README.md
