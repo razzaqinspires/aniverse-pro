@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -11,9 +11,11 @@ import type { AnimeDetail, ServerHealth, WatchResult } from "@/lib/types";
 import { ApiError, apiFetch } from "@/hooks/useAnime";
 import { dispatchKeysRefresh } from "@/hooks/useKeys";
 import { useXp } from "@/hooks/useXp";
+import { initialsOf, relativeTime } from "@/utils/format";
 import ServerSwitcher from "@/components/ServerSwitcher";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Skeleton from "@/components/Skeleton";
+import EmptyState from "@/components/EmptyState";
 
 // Player + ad modal reference browser-only libraries (plyr, hls.js) at module load,
 // so they must be excluded from SSR entirely and hydrated client-side.
@@ -27,6 +29,16 @@ const VideoPlayer = dynamic(() => import("@/components/VideoPlayer"), {
 });
 const AdModal = dynamic(() => import("@/components/AdModal"), { ssr: false });
 
+interface CommentItem {
+  id: number;
+  userId: string;
+  name: string;
+  image?: string;
+  isDemo: boolean;
+  text: string;
+  createdAt: number;
+}
+
 export default function WatchPage() {
   const params = useParams<{ id: string; ep: string }>();
   const router = useRouter();
@@ -36,6 +48,12 @@ export default function WatchPage() {
   const ep = parseInt(params?.ep ?? "1", 10);
 
   const { startHeartbeat, stopHeartbeat } = useXp();
+  // Resume position from ?t= (read client-side; player only renders after load anyway).
+  const resumeT = useMemo<number | undefined>(() => {
+    if (typeof window === "undefined") return undefined;
+    const v = Number(new URLSearchParams(window.location.search).get("t"));
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
+  }, []);
   const playingRef = useRef(false);
 
   const [watch, setWatch] = useState<WatchResult | null>(null);
@@ -49,6 +67,10 @@ export default function WatchPage() {
 
   const startedKeyRef = useRef<string>("");
   const triedServersRef = useRef<Set<string>>(new Set());
+  const watchlistMarkedRef = useRef(false);
+  const [comments, setComments] = useState<CommentItem[] | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
 
   // Redirect if not logged in.
   useEffect(() => {
@@ -187,6 +209,82 @@ export default function WatchPage() {
     loadWatch(undefined, true);
   }, [loadWatch]);
 
+  // ---- v2: comments, watchlist auto-mark, download queue ----
+  const loadComments = useCallback(() => {
+    let alive = true;
+    apiFetch<{ items: CommentItem[] }>(`/api/comments?animeId=${animeId}&ep=${ep}`)
+      .then((d) => { if (alive) setComments(d.items ?? []); })
+      .catch(() => { if (alive) setComments([]); });
+    return () => { alive = false; };
+  }, [animeId, ep]);
+
+  useEffect(() => {
+    return loadComments();
+  }, [loadComments]);
+
+  // Auto-mark as watching once we have the anime title (best-effort).
+  useEffect(() => {
+    if (!anime || watchlistMarkedRef.current) return;
+    watchlistMarkedRef.current = true;
+    apiFetch("/api/watchlist", {
+      method: "POST",
+      body: JSON.stringify({ animeId, status: "watching", title: anime.title, image: anime.image ?? "" }),
+    }).catch(() => { /* ignore */ });
+  }, [anime, animeId]);
+
+  const totalEpsNow = anime?.episodes ?? anime?.episodesList?.length ?? 0;
+  const handleEnded = useCallback(() => {
+    if (totalEpsNow > 0 && ep >= totalEpsNow) {
+      apiFetch("/api/watchlist", {
+        method: "POST",
+        body: JSON.stringify({ animeId, status: "completed", title: anime?.title ?? `Anime ${animeId}`, image: anime?.image ?? "" }),
+      }).catch(() => { /* ignore */ });
+      toast.success("Anime selesai ditonton!", { description: "Ditandai selesai di watchlist." });
+    }
+  }, [anime, animeId, ep, totalEpsNow]);
+
+  const handleAddToQueue = useCallback(() => {
+    apiFetch("/api/download-queue", {
+      method: "POST",
+      body: JSON.stringify({ animeId, ep, title: anime?.title ?? `Anime ${animeId}`, image: anime?.image ?? "" }),
+    })
+      .then(() => toast.success("Ditambahkan ke antrian tonton nanti", { description: `${anime?.title ?? ""} EP ${ep}` }))
+      .catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) {
+          router.replace("/login");
+        } else {
+          toast.error(err instanceof Error ? err.message : "Gagal menambahkan ke antrian");
+        }
+      });
+  }, [anime, animeId, ep, router]);
+
+  const handleSubmitComment = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const text = commentText.trim();
+      if (!text || commentBusy) return;
+      setCommentBusy(true);
+      apiFetch("/api/comments", {
+        method: "POST",
+        body: JSON.stringify({ animeId, ep, text: text.slice(0, 500) }),
+      })
+        .then(() => {
+          setCommentText("");
+          toast.success("Komentar terkirim");
+          loadComments();
+        })
+        .catch((err: unknown) => {
+          if (err instanceof ApiError && err.status === 401) {
+            router.replace("/login");
+          } else {
+            toast.error(err instanceof Error ? err.message : "Gagal mengirim komentar");
+          }
+        })
+        .finally(() => setCommentBusy(false));
+    },
+    [commentText, commentBusy, animeId, ep, loadComments, router],
+  );
+
   if (status === "loading" || status === "unauthenticated") {
     return (
       <div className="container-x" style={{ paddingTop: 120, display: "flex", justifyContent: "center" }}>
@@ -247,6 +345,8 @@ export default function WatchPage() {
                   onError={autoSwitchServer}
                   onProgress={handleProgress}
                   playingRef={playingRef}
+                  initialTime={resumeT}
+                  onEnded={handleEnded}
                 />
               </ErrorBoundary>
 
@@ -262,6 +362,22 @@ export default function WatchPage() {
                   <Link href={`/watch/${animeId}/${ep + 1}`} className="btn btn-primary">Episode {ep + 1} →</Link>
                 ) : (
                   <button type="button" className="btn btn-primary" disabled>Episode Terakhir ✓</button>
+                )}
+              </div>
+              {/* Tonton nanti + download */}
+              <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <button type="button" className="btn btn-ghost" onClick={handleAddToQueue}>⭐ Tonton Nanti</button>
+                {watch.isDemo && watch.sources.some((s) => s.type === "mp4") ? (
+                  <a
+                    href={watch.sources.find((s) => s.type === "mp4")?.url}
+                    download
+                    className="btn btn-ghost"
+                    aria-label="Download video (Server Demo)"
+                  >
+                    ⬇️ Download (Server Demo)
+                  </a>
+                ) : (
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Download tidak tersedia untuk stream ini (CORS/HLS)</span>
                 )}
               </div>
 
@@ -302,6 +418,63 @@ export default function WatchPage() {
           ) : null}
         </aside>
       </div>
+
+      {/* Comments section (below player + sidebar) */}
+      <section style={{ marginTop: 32, maxWidth: 820 }} aria-label="Komentar">
+        <h2 className="section-title">Komentar {comments ? `(${comments.length})` : ""}</h2>
+        <form onSubmit={handleSubmitComment} className="card" style={{ padding: 16, marginBottom: 20 }}>
+          <div style={{ position: "relative" }}>
+            <textarea
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value.slice(0, 500))}
+              placeholder="Tulis komentar untuk episode ini... (maksimal 500 karakter)"
+              maxLength={500}
+              rows={3}
+              aria-label="Tulis komentar"
+              className="input"
+              style={{ borderRadius: "var(--radius-md)", resize: "vertical", minHeight: 72, paddingRight: 60, fontFamily: "inherit" }}
+            />
+            <span style={{ position: "absolute", bottom: 10, right: 14, fontSize: 11, color: "var(--text-muted)" }}>{commentText.length}/500</span>
+          </div>
+          <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+            <button type="submit" className="btn btn-primary" disabled={!commentText.trim() || commentBusy}>
+              {commentBusy ? "Mengirim..." : "Kirim Komentar"}
+            </button>
+          </div>
+        </form>
+
+        {comments === null ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="skeleton" style={{ height: 64, borderRadius: "var(--radius-md)" }} aria-hidden="true" />
+            ))}
+          </div>
+        ) : comments.length === 0 ? (
+          <EmptyState emoji="💬" title="Jadilah yang pertama berkomentar." description="Bagikan pendapatmu tentang episode ini." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {comments.map((c) => (
+              <div key={c.id} className="card" style={{ padding: 14, display: "flex", gap: 12 }}>
+                {c.image ? (
+                  <img src={c.image} alt="" aria-hidden="true" referrerPolicy="no-referrer" style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                ) : (
+                  <span aria-hidden="true" style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--accent-gradient)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
+                    {initialsOf(c.name)}
+                  </span>
+                )}
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>{c.name || "Pengguna"}</span>
+                    {c.isDemo ? <span className="badge" style={{ fontSize: 10 }}>Demo</span> : null}
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{relativeTime(c.createdAt)}</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: 14, color: "var(--text-soft)", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <style>{`
         @media (min-width: 1024px) {

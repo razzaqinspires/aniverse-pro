@@ -17,6 +17,10 @@ interface VideoPlayerProps {
   /** Parent reads this to know whether XP should be earned. */
   playingRef?: MutableRefObject<boolean>;
   autoPlay?: boolean;
+  /** Seek to this position (seconds) once metadata loads. */
+  initialTime?: number;
+  /** Called when playback reaches the end. */
+  onEnded?: () => void;
 }
 
 function qualityLabel(src: VideoSource, index: number): string {
@@ -32,6 +36,8 @@ export default function VideoPlayer({
   onProgress,
   playingRef,
   autoPlay = true,
+  initialTime,
+  onEnded,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const plyrRef = useRef<Plyr | null>(null);
@@ -39,13 +45,18 @@ export default function VideoPlayer({
   const bufferingTimerRef = useRef<number | null>(null);
   const errorFiredRef = useRef(false);
   const lastSaveRef = useRef(0);
+  const seekedRef = useRef(false);
   const onErrorRef = useRef(onError);
   const onProgressRef = useRef(onProgress);
+  const onEndedRef = useRef(onEnded);
+  const initialTimeRef = useRef(initialTime);
   const playingRefInner = useRef(false);
   const [activeQuality, setActiveQuality] = useState(0);
 
   onErrorRef.current = onError;
   onProgressRef.current = onProgress;
+  onEndedRef.current = onEnded;
+  initialTimeRef.current = initialTime;
 
   const clearBufferingTimer = useCallback(() => {
     if (bufferingTimerRef.current !== null) {
@@ -184,6 +195,20 @@ export default function VideoPlayer({
         onProgressRef.current?.(video.currentTime);
       }
     };
+    const onLoadedMetadata = () => {
+      const t = initialTimeRef.current;
+      if (!seekedRef.current && typeof t === "number" && t > 0) {
+        seekedRef.current = true;
+        try {
+          video.currentTime = t;
+        } catch {
+          // ignore seek failures
+        }
+      }
+    };
+    const onEndedHandler = () => {
+      onEndedRef.current?.();
+    };
 
     player.on("play", onPlay);
     player.on("pause", onPause);
@@ -192,6 +217,8 @@ export default function VideoPlayer({
     player.on("canplay", onPlaying);
     player.on("error", onPlayerError);
     player.on("timeupdate", onTimeUpdate);
+    player.on("loadedmetadata", onLoadedMetadata);
+    player.on("ended", onEndedHandler);
     video.addEventListener("error", onPlayerError);
 
     // Global keyboard shortcuts (ignored while typing in form fields).
@@ -245,6 +272,8 @@ export default function VideoPlayer({
       player.off("canplay", onPlaying);
       player.off("error", onPlayerError);
       player.off("timeupdate", onTimeUpdate);
+      player.off("loadedmetadata", onLoadedMetadata);
+      player.off("ended", onEndedHandler);
       video.removeEventListener("error", onPlayerError);
       document.removeEventListener("keydown", onKeyDown);
       clearBufferingTimer();

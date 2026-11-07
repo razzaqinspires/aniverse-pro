@@ -21,6 +21,9 @@ export const config = {
 
   rateLimitPerMinute: parseInt(process.env.RATE_LIMIT_PER_MIN || "30", 10),
   bodySizeLimit: "1mb",
+  tursoDatabaseUrl: process.env.TURSO_DATABASE_URL || "",
+  tursoAuthToken: process.env.TURSO_AUTH_TOKEN || "",
+  isVercel: Boolean(process.env.VERCEL || process.env.VERCEL_URL),
 } as const;
 
 function parseProviders(raw: string): string[] {
@@ -39,4 +42,15 @@ function parseProviders(raw: string): string[] {
 
 export function isGoogleConfigured(): boolean {
   return Boolean(config.googleClientId && config.googleClientSecret);
+}
+
+export function isTursoConfigured(): boolean {
+  return Boolean(config.tursoDatabaseUrl && config.tursoAuthToken);
+}
+
+/** Timestamp (ms) of the next midnight, local time. */
+export function nextMidnightFrom(now: number = Date.now()): number {
+  const d = new Date(now);
+  d.setHours(24, 0, 0, 0);
+  return d.getTime();
 }

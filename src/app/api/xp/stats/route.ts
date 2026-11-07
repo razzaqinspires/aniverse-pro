@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   const auth = await requireSession(req);
   if ("error" in auth) return auth.error;
 
-  const stats = getXpStats(auth.userId);
+  const stats = await getXpStats(auth.userId);
   if (!stats) {
     return apiOk({
       xp: 0,

@@ -23,7 +23,7 @@ export const authOptions: NextAuthOptions = {
       name: "Demo / Guest",
       credentials: {}, // no fields — one click login
       async authorize() {
-        getOrCreateUser(DEMO_USER_ID, {
+        await getOrCreateUser(DEMO_USER_ID, {
           email: "demo@aniverse.local",
           name: "Tamu Demo",
           image: null,
@@ -58,7 +58,7 @@ export const authOptions: NextAuthOptions = {
     },
     async signIn({ user, account }) {
       if (account?.provider === "google" && user) {
-        getOrCreateUser(`google-${user.id ?? user.email}`, {
+        await getOrCreateUser(`google-${user.id ?? user.email}`, {
           email: user.email ?? null,
           name: user.name ?? null,
           image: user.image ?? null,

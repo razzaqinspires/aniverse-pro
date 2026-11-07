@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (shouldSpend) {
-    const spent = spendKey(userId, `watch:${animeId}:${ep}`);
+    const spent = await spendKey(userId, `watch:${animeId}:${ep}`);
     if (!spent) {
       return apiError(402, "Kunci habis", { keys: 0, needAd: true });
     }
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const watch = await resolveWatch(animeId, ep, server);
-    return apiOk({ watch, keys: getKeys(userId), isDemo });
+    return apiOk({ watch, keys: await getKeys(userId), isDemo });
   } catch (err) {
     console.error("[api/anime/watch]", err);
     return apiError(502, "Gagal mengambil sumber video");

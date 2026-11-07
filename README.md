@@ -302,3 +302,76 @@ aniverse-pro/
 <div align="center">
 <sub>Dibuat untuk tujuan edukasi · Aniverse PRO · Next.js 14 + TypeScript + SQLite</sub>
 </div>
+
+---
+
+## 🚀 Deploy ke Vercel (langkah demi langkah)
+
+Project sudah **Vercel-ready**. Catatan penting: Vercel serverless punya filesystem read-only (hanya `/tmp` yang writable & ephemeral) dan default Node-nya bisa lebih baru dari yang didukung `better-sqlite3`. Project ini sudah mengatasinya:
+
+1. **Versi Node dipin ke 20.x** via `package.json` → `"engines": {"node": "20.x"}` dan file `.nvmrc` berisi `20`. Vercel membaca keduanya, sehingga `npm install` memakai prebuilt binary `better-sqlite3` (tidak perlu compile via node-gyp).
+2. **Storage adapter otomatis** (`src/lib/storage/`):
+   - Jika `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` di-set → pakai **Turso/libSQL** (pure JS, tanpa native module, persisten — direkomendasikan untuk production di Vercel).
+   - Jika `DATABASE_PATH` di-set → pakai SQLite di `/tmp/aniverse-pro.db` (ephemeral per instance).
+   - Jika berjalan di Vercel tanpa keduanya → fallback **in-memory Map** (data hilang saat cold start, tapi aplikasi tetap berfungsi penuh untuk demo).
+
+### Langkah deploy
+1. Push project ke GitHub/GitLab.
+2. Di Vercel → **Add New → Project** → import repo. Framework preset: **Next.js** (auto-detect).
+3. Buka tab **Environment Variables**, tambahkan:
+   | Variabel | Wajib? | Isi |
+   |---|---|---|
+   | `NEXTAUTH_SECRET` | ✅ wajib | `openssl rand -base64 32` |
+   | `NEXTAUTH_URL` | ✅ wajib | `https://domain-kamu.vercel.app` |
+   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | opsional | isi jika ingin Login Google |
+   | `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | opsional (disarankan) | dari turso.tech agar data persisten |
+   | `ANIME_PROVIDERS` | opsional | provider video upstream (kosongkan = Server Demo) |
+4. **Deploy**. Build akan sukses karena Node 20 + Turso adapter tanpa native module.
+5. Setelah live, tambahkan **Authorized redirect URI** Google OAuth (jika dipakai): `https://domain-kamu.vercel.app/api/auth/callback/google`.
+
+### Tanpa Turso?
+Aplikasi tetap jalan (Login Demo, kunci, XP, iklan, Server Demo semua berfungsi), tapi data user (kunci/XP/riwayat) disimpan **in-memory** dan hilang setiap cold start / instance baru. Cocok untuk demo/penilaian; untuk production wajib tambahkan Turso (gratis tier pemula).
+
+### Troubleshooting khas Vercel
+- **Build gagal `better-sqlite3` / node-gyp / V8 API error** → pastikan `engines.node = "20.x"` dan `.nvmrc = 20` ada (sudah disertakan). Jika masih, set Project Settings → Node.js Version → 20.x.
+- **Data hilang setelah beberapa menit** → itu in-memory fallback; tambahkan `TURSO_*` untuk persistensi.
+- **Login Demo error / redirect loop** → pastikan `NEXTAUTH_URL` persis sama dengan domain Vercel (termasuk https).
+
+---
+## 🆕 Changelog v2 (7 fitur pengguna baru)
+
+Semua fitur v2 tersimpan **per-user** via storage adapter yang sama (sqlite / Turso / in-memory) — interface di-extend, tidak di-break. Tidak ada kode placeholder/TODO.
+
+| # | Fitur | Cara kerja |
+|---|---|---|
+| 1 | **Lanjut Tonton (Continue Watching)** | Progress detik per (user, anime, episode) disimpan via heartbeat history. Baris "Lanjut Tonton" di Home menampilkan poster + progress bar + resume ke posisi terakhir (`/watch/[id]/[ep]?t=<detik>` → player seek otomatis). |
+| 2 | **Watchlist / Bookmark** | Tombol di halaman detail & player. Status otomatis: `watching` saat mulai nonton, `completed` saat episode terakhir selesai. Halaman `/watchlist` dengan filter tab (Semua/Sedang Ditonton/Selesai/Rencana). 1 user = 1 baris/anime (upsert). |
+| 3 | **Rating & Ulasan** | Widget bintang 1-5 + ulasan teks opsional (maks 500 karakter, disanitasi) di halaman detail. Menampilkan rata-rata rating komunitas Aniverse + jumlah pemberi. 1 user = 1 rating/anime (upsert). |
+| 4 | **Komentar per episode** | Section di bawah player. Login wajib, maks 500 karakter, strip-tag sanitasi, rate limit global. Avatar/nama/waktu relatif + badge "Demo". Tanpa balas nested (scope). |
+| 5 | **Rekomendasi personal** | Endpoint `/api/recommendations`: algoritma content-based sederhana — genre overlap dari watchlist + rating tinggi user vs katalog AniList, di-score, dedupe yang sudah ditonton. **Bukan ML.** Fallback ke trending jika data user kurang atau AniList gagal. |
+| 6 | **Notifikasi episode baru** | Badge lonceng di navbar (poll 60s). Dihitung dari `nextAiringEpisode` AniList untuk anime di watchlist, dibanding timestamp kunjungan terakhir (disimpan di `user_meta`). Halaman `/notifications`. Tanpa push server (in-app saja). |
+| 7 | **Download / Tonton Nanti** | **Jujur**: stream HLS/m3u8 pihak ketiga TIDAK bisa di-download dari browser (CORS). Diimplementasikan sebagai **Queue Tonton Nanti** (`/downloads`) + tombol download asli `<a download>` **hanya untuk Server Demo** (mp4 publik). Batasan ini ditampilkan di UI. |
+
+### Migrasi Database (otomatis, idempoten)
+- **SQLite & Turso**: 5 tabel baru (`watchlist`, `ratings`, `comments`, `user_meta`, `download_queue`) dibuat via `CREATE TABLE IF NOT EXISTS` saat adapter pertama kali dipakai — **tidak perlu langkah manual**, data lama tetap utuh.
+- **In-memory**: tabel dibuat otomatis di Map (ephemeral per cold start).
+- Tidak ada perubahan pada tabel v1 — upgrade aman tanpa downtime.
+
+### Endpoint API baru (v2, semua auth kecuali disebut)
+| Endpoint | Method | Deskripsi |
+|---|---|---|
+| `/api/watchlist` | GET/POST/DELETE | List (filter ?status=), upsert, hapus |
+| `/api/ratings?animeId=` | GET/POST | {avg, count, userRating} + upsert rating |
+| `/api/comments?animeId=&ep=` | GET/POST | List + post komentar episode |
+| `/api/recommendations` | GET | Rekomendasi personal (fallback trending) |
+| `/api/notifications` | GET/POST | List notifikasi + tandai sudah dilihat |
+| `/api/download-queue` | GET/POST/DELETE | Queue tonton nanti |
+
+### Testing v2
+`tests/v2.test.ts` — 6 test: watchlist add/remove/idempotent, filter status, rating upsert (1 user 1 rating, avg benar), progress/history upsert (tidak duplikat), download queue add/remove, user meta KV. Total 15 test (9 v1 + 6 v2), semua lolos.
+
+### Batasan yang dicatat jujur
+- Rekomendasi berbasis genre overlap sederhana, bukan personalisasi ML.
+- Notifikasi dihitung saat request (poll), bukan push realtime.
+- Download asli hanya untuk Server Demo mp4; stream pihak ketiga hanya bisa di-antri "tonton nanti".
+- Di Vercel tanpa Turso, semua data v2 juga in-memory (ephemeral) — sama seperti v1.

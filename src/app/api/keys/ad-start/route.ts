@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   const auth = await requireSession(req);
   if ("error" in auth) return auth.error;
 
-  const watchId = startAdSession(auth.userId);
+  const watchId = await startAdSession(auth.userId);
   return apiOk({
     watchId,
     durationSec: config.adDurationSec,

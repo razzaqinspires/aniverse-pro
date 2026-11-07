@@ -1,20 +1,14 @@
-// XP & level logic. Level curve: to advance from level L to L+1 requires 100 * L^2 XP
-// (cumulative triangular-sum). Reward: +1 key every 5 levels + badge.
+// XP & level business logic. Storage-agnostic — persistence via StorageAdapter.
+// Level curve: to advance from level L to L+1 requires 100 * L^2 XP (cumulative sum).
+// Reward: +1 key every 5 levels + badge. Anti-farming: server validates rate, hidden-tab
+// rejection, and daily XP cap.
 
-import { getDb, nextMidnight } from "./db";
-import { config } from "./config";
+import { getStorage } from "./storage";
 import { grantKeys } from "./keys";
+import { config, nextMidnightFrom } from "./config";
 
 export function xpForLevelGap(level: number): number {
-  // XP needed to go from `level` to `level + 1`
   return 100 * level * level;
-}
-
-export function cumulativeXpForLevel(level: number): number {
-  // total XP needed to *reach* `level` (level 1 => 0)
-  let sum = 0;
-  for (let l = 1; l < level; l++) sum += xpForLevelGap(l);
-  return sum;
 }
 
 export function computeLevel(xpTotal: number): { level: number; xpInLevel: number; xpToNext: number; progressPct: number } {
@@ -23,7 +17,7 @@ export function computeLevel(xpTotal: number): { level: number; xpInLevel: numbe
   while (remaining >= xpForLevelGap(level)) {
     remaining -= xpForLevelGap(level);
     level++;
-    if (level > 1000) break; // safety
+    if (level > 1000) break;
   }
   const gap = xpForLevelGap(level);
   return {
@@ -55,31 +49,24 @@ export interface XpHeartbeatOutcome {
   capped: boolean;
 }
 
-/**
- * Server-validated XP heartbeat.
- * - rejects if tab hidden / not playing (client must not send, but server double-checks)
- * - rate-limited: at most 1 heartbeat per XP_HEARTBEAT_INTERVAL_SEC
- * - daily cap enforced; xp_today resets at midnight
- */
-export function applyXpHeartbeat(
+export async function applyXpHeartbeat(
   userId: string,
   seconds: number,
   hidden: boolean,
   playing: boolean
-): XpHeartbeatOutcome {
-  const db = getDb();
+): Promise<XpHeartbeatOutcome> {
+  const storage = getStorage();
   const now = Date.now();
-  const row = db.prepare("SELECT * FROM xp WHERE user_id = ?").get(userId) as any;
+  const row = await storage.getXp(userId);
   if (!row) {
     return { ok: false, xp: 0, level: 1, xpToday: 0, dailyCap: config.xpDailyCap, leveledUp: false, newBadges: [], rewardKeysGranted: 0, capped: false };
   }
 
-  // Daily cap reset
   let xpToday = row.xp_today;
   let capReset = row.daily_cap_reset;
   if (now >= capReset) {
     xpToday = 0;
-    capReset = nextMidnight(now);
+    capReset = nextMidnightFrom(now);
   }
 
   const base: XpHeartbeatOutcome = {
@@ -89,15 +76,12 @@ export function applyXpHeartbeat(
 
   if (hidden || !playing) return { ...base, ok: false };
 
-  // Rate limit: ignore heartbeats arriving too fast
+  // Rate limit: ignore heartbeats arriving faster than the configured interval.
   if (now - row.last_heartbeat < (config.xpHeartbeatIntervalSec - 1) * 1000) {
     return base;
   }
-  // Clamp claimed seconds to one interval window
   const grantedSec = Math.min(Math.max(seconds, 0), config.xpHeartbeatIntervalSec + 1);
   const gainedXp = grantedSec * config.xpPerSecond;
-
-  // Daily cap
   const room = Math.max(0, config.xpDailyCap - xpToday);
   const actualXp = Math.min(gainedXp, room);
   const capped = actualXp < gainedXp;
@@ -111,18 +95,21 @@ export function applyXpHeartbeat(
   let rewardKeys = 0;
   const newBadges: string[] = [];
   if (leveledUp) {
-    // +1 key every 5 levels crossed
-    const crossed = [];
+    const crossed: number[] = [];
     for (let l = before.level + 1; l <= after.level; l++) crossed.push(l);
     rewardKeys = crossed.filter((l) => l % 5 === 0).length;
-    if (rewardKeys > 0) grantKeys(userId, rewardKeys, "level_up_reward");
+    if (rewardKeys > 0) await grantKeys(userId, rewardKeys, "level_up_reward");
     const beforeBadges = new Set(badgesForLevel(before.level));
     newBadges.push(...badgesForLevel(after.level).filter((b) => !beforeBadges.has(b)));
   }
 
-  db.prepare(
-    "UPDATE xp SET xp_total = ?, level = ?, xp_today = ?, daily_cap_reset = ?, last_heartbeat = ? WHERE user_id = ?"
-  ).run(newXpTotal, after.level, newXpToday, capReset, now, userId);
+  await storage.updateXp(userId, {
+    xp_total: newXpTotal,
+    level: after.level,
+    xp_today: newXpToday,
+    daily_cap_reset: capReset,
+    last_heartbeat: now,
+  });
 
   return {
     ok: true,
@@ -137,10 +124,10 @@ export function applyXpHeartbeat(
   };
 }
 
-export function getXpStats(userId: string) {
-  const db = getDb();
+export async function getXpStats(userId: string) {
+  const storage = getStorage();
   const now = Date.now();
-  const row = db.prepare("SELECT * FROM xp WHERE user_id = ?").get(userId) as any;
+  const row = await storage.getXp(userId);
   if (!row) return null;
   let xpToday = row.xp_today;
   if (now >= row.daily_cap_reset) xpToday = 0;

@@ -28,6 +28,6 @@ export async function POST(req: NextRequest) {
   }
   const seconds = Math.min(Math.max(parsed.data.seconds, 0), 10);
 
-  const outcome = applyXpHeartbeat(userId, seconds, parsed.data.hidden, parsed.data.playing);
+  const outcome = await applyXpHeartbeat(userId, seconds, parsed.data.hidden, parsed.data.playing);
   return NextResponse.json(outcome, { status: 200 });
 }

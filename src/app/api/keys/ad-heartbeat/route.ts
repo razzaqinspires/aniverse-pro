@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   }
   const { watchId, progress, hidden } = parsed.data;
 
-  const result = heartbeatAd(watchId, userId, progress, hidden);
+  const result = await heartbeatAd(watchId, userId, progress, hidden);
   if (!result.ok) {
     return apiError(400, result.resetReason ?? "Gagal memproses heartbeat iklan");
   }

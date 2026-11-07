@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     return apiError(400, "Data tidak valid", { issues: parsed.error.issues });
   }
 
-  const result = completeAd(parsed.data.watchId, userId);
+  const result = await completeAd(parsed.data.watchId, userId);
   if (!result.ok) {
     return NextResponse.json(
       { ok: false, reason: result.reason ?? "Gagal mengklaim hadiah iklan", keys: result.keys },

@@ -125,3 +125,29 @@ export async function detailAnime(id: number) {
     episodesList: Array.from({ length: episodes }, (_, i) => ({ number: i + 1, title: `Episode ${i + 1}` })),
   };
 }
+
+/** Batch-fetch next-airing-episode info for a list of anime ids (used by notifications). */
+export async function fetchAiringInfo(ids: number[]): Promise<{ id: number; title: string; image: string; status: string; nextAiringEpisode: { episode: number; airingAt: number } | null }[]> {
+  if (ids.length === 0) return [];
+  const data = await gql<{ Page: { media: any[] } }>(
+    `query ($ids: [Int]) {
+      Page(perPage: 50) {
+        media(id_in: $ids, type: ANIME) {
+          id
+          status
+          title { userPreferred english romaji }
+          coverImage { large }
+          nextAiringEpisode { episode airingAt }
+        }
+      }
+    }`,
+    { ids }
+  );
+  return data.Page.media.map((m: any) => ({
+    id: m.id,
+    title: pickTitle(m.title || {}),
+    image: m.coverImage?.large || "",
+    status: m.status,
+    nextAiringEpisode: m.nextAiringEpisode ? { episode: m.nextAiringEpisode.episode, airingAt: m.nextAiringEpisode.airingAt } : null,
+  }));
+}

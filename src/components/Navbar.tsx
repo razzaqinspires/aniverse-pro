@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
+import { apiFetch } from "@/hooks/useAnime";
 import KeyHUD from "./KeyHUD";
 import XpRing from "./XpRing";
 import ThemeToggle from "./ThemeToggle";
@@ -33,6 +34,23 @@ export default function Navbar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [unread, setUnread] = useState(0);
+  // Poll notifications every 60s while logged in; 401/errors silently ignored.
+  useEffect(() => {
+    if (!user) {
+      setUnread(0);
+      return;
+    }
+    let alive = true;
+    const load = () => {
+      apiFetch<{ unread: number }>("/api/notifications")
+        .then((d) => { if (alive) setUnread(Math.max(0, d.unread ?? 0)); })
+        .catch(() => { /* not logged in or endpoint unavailable */ });
+    };
+    load();
+    const id = window.setInterval(load, 60_000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [user]);
 
   // Close dropdown on outside click.
   useEffect(() => {
@@ -129,6 +147,24 @@ export default function Navbar() {
           <div style={{ display: "none" }} className="navbar-xp-desktop">
             <XpRing />
           </div>
+          {user ? (
+            <button
+              type="button"
+              onClick={() => router.push("/notifications")}
+              aria-label="Notifikasi"
+              title="Notifikasi"
+              style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-full)", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--border)", background: "rgba(255,255,255,0.05)", color: "var(--text)", flexShrink: 0 }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              {unread > 0 ? (
+                <span aria-hidden="true" style={{ position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, padding: "0 5px", borderRadius: "var(--radius-full)", background: "var(--danger)", color: "#fff", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "2px solid var(--bg)" }}>
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
           <ThemeToggle />
 
           {/* Mobile search toggle */}
@@ -193,6 +229,8 @@ export default function Navbar() {
                       { href: "/profile", label: "Profil", icon: "👤" },
                       { href: "/dashboard", label: "Dashboard XP", icon: "📊" },
                       { href: "/history", label: "Riwayat Tonton", icon: "🕘" },
+                      { href: "/watchlist", label: "Watchlist", icon: "📋" },
+                      { href: "/downloads", label: "Tonton Nanti", icon: "⬇️" },
                       { href: "/settings", label: "Pengaturan", icon: "⚙️" },
                     ].map((item) => (
                       <Link

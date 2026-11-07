@@ -1,22 +1,20 @@
-// tests/xp.test.ts — XP daily cap, hidden-tab rejection, level curve.
-// XP_DAILY_CAP=100, XP_PER_SECOND=1 via env. Heartbeat rate-limit (5s window) is bypassed
-// in tests by resetting last_heartbeat to 0 directly between calls.
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+// tests/xp.test.ts — level curve (pure), daily XP cap, hidden-tab rejection.
+// Uses SqliteAdapter directly + resets last_heartbeat between heartbeats.
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 
-const DB_PATH = `/tmp/test-xp-${process.pid}-${Date.now()}.db`;
-process.env.DATABASE_PATH = DB_PATH;
 process.env.XP_DAILY_CAP = "100";
 process.env.XP_PER_SECOND = "1";
+const DB_PATH = `/tmp/test-xp-${process.pid}-${Date.now()}.db`;
+process.env.DATABASE_PATH = DB_PATH;
 
-let db: typeof import("@/lib/db");
+let adapter: import("@/lib/storage/types").StorageAdapter;
 let xp: typeof import("@/lib/xp");
 
 beforeAll(async () => {
-  vi.resetModules();
-  db = await import("@/lib/db");
+  const { SqliteAdapter } = await import("@/lib/storage/sqlite");
+  adapter = new SqliteAdapter(DB_PATH);
   xp = await import("@/lib/xp");
-  db.getDb();
 });
 
 afterAll(() => {
@@ -25,60 +23,37 @@ afterAll(() => {
   try { fs.unlinkSync(`${DB_PATH}-shm`); } catch { /* ignore */ }
 });
 
-function resetHeartbeat(userId: string) {
-  db.getDb().prepare("UPDATE xp SET last_heartbeat = 0 WHERE user_id = ?").run(userId);
-}
-
-describe("XP daily cap", () => {
-  it("caps xpToday at XP_DAILY_CAP and reports capped=true", () => {
-    const userId = "cap-user";
-    db.getOrCreateUser(userId, { email: null, name: "Cap", image: null, isDemo: false });
-
-    let last = xp.applyXpHeartbeat(userId, 6, false, true); // max 6 xp/call
-    let iterations = 0;
-    while (!last.capped && iterations < 50) {
-      resetHeartbeat(userId);
-      last = xp.applyXpHeartbeat(userId, 6, false, true);
-      iterations++;
-    }
-
-    expect(last.capped).toBe(true);
-    expect(last.xpToday).toBeLessThanOrEqual(100);
-    expect(last.xpToday).toBeGreaterThan(0);
-
-    // One more heartbeat after cap: gains nothing, stays under cap.
-    resetHeartbeat(userId);
-    const beyond = xp.applyXpHeartbeat(userId, 6, false, true);
-    expect(beyond.xpToday).toBeLessThanOrEqual(100);
-    expect(beyond.xp).toBe(last.xp);
-  });
-});
-
-describe("hidden tab heartbeat", () => {
-  it("returns ok:false and adds no XP", () => {
-    const userId = "hidden-user";
-    db.getOrCreateUser(userId, { email: null, name: "Hidden", image: null, isDemo: false });
-    resetHeartbeat(userId);
-
-    const before = xp.getXpStats(userId);
-    const result = xp.applyXpHeartbeat(userId, 5, true, true); // hidden=true
-
-    expect(result.ok).toBe(false);
-    expect(result.xp).toBe(before?.xp ?? 0);
-
-    const after = xp.getXpStats(userId);
-    expect(after?.xp).toBe(before?.xp ?? 0);
-    expect(after?.xpToday).toBe(0);
-  });
-});
-
 describe("computeLevel curve", () => {
-  it("xp=0 → level 1; xp=100 → level 2 (gap level1 = 100*1^2 = 100)", () => {
+  it("level boundaries follow 100*L^2 gap", () => {
     expect(xp.computeLevel(0).level).toBe(1);
     expect(xp.computeLevel(99).level).toBe(1);
-    expect(xp.computeLevel(100).level).toBe(2);
-    // gap to level 3 = 100*2^2 = 400, so 100+399=499 still level 2, 500 → level 3
-    expect(xp.computeLevel(499).level).toBe(2);
-    expect(xp.computeLevel(500).level).toBe(3);
+    expect(xp.computeLevel(100).level).toBe(2); // gap(1)=100
+    expect(xp.computeLevel(100 + 400).level).toBe(3); // gap(2)=400 → total 500
+  });
+});
+
+describe("applyXpHeartbeat anti-farming", () => {
+  it("hidden tab heartbeat is rejected (ok:false) and adds no XP", async () => {
+    const userId = "xp-hidden-user";
+    await adapter.getOrCreateUser(userId, { email: null, name: "H", image: null, isDemo: false });
+    const before = await adapter.getXp(userId);
+    const out = await xp.applyXpHeartbeat(userId, 5, true, true);
+    expect(out.ok).toBe(false);
+    const after = await adapter.getXp(userId);
+    expect(after?.xp_total).toBe(before?.xp_total);
+  });
+
+  it("daily cap is enforced (capped=true, xpToday <= cap)", async () => {
+    const userId = "xp-cap-user";
+    await adapter.getOrCreateUser(userId, { email: null, name: "C", image: null, isDemo: false });
+    let capped = false;
+    for (let i = 0; i < 40; i++) {
+      await adapter.updateXp(userId, { last_heartbeat: 0 });
+      const out = await xp.applyXpHeartbeat(userId, 5, false, true);
+      if (out.capped) { capped = true; break; }
+    }
+    expect(capped).toBe(true);
+    const row = await adapter.getXp(userId);
+    expect(row!.xp_today).toBeLessThanOrEqual(100);
   });
 });

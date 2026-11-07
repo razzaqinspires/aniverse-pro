@@ -28,12 +28,12 @@ export async function POST(req: NextRequest) {
   }
   const { animeId, ep } = parsed.data;
 
-  const spent = spendKey(userId, `watch:${animeId}:${ep}`);
+  const spent = await spendKey(userId, `watch:${animeId}:${ep}`);
   if (!spent) {
     return NextResponse.json(
       { ok: false, keys: 0, reason: "Kunci tidak mencukupi", needAd: true },
       { status: 402 }
     );
   }
-  return apiOk({ keys: getKeys(userId) });
+  return apiOk({ keys: await getKeys(userId) });
 }
